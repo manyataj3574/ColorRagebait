@@ -380,46 +380,38 @@ export async function fetchLeaderboard(studentId?: string): Promise<LeaderboardR
 
     if (res.ok) {
       const serverData: LeaderboardResult = await res.json();
-      let hasLocalUpdatesToSync = false;
 
-      const serverPlayerIds = new Set<string>();
       if (Array.isArray(serverData.leaderboard)) {
+        // Build updated registry from authoritative server data
+        const updatedRegistry: Record<string, StoredPlayer> = {};
+
+        // Keep current player profile if present locally
+        if (normId && registry[normId]) {
+          updatedRegistry[normId] = registry[normId];
+        }
+
         for (const entry of serverData.leaderboard) {
           const id = entry.studentId.toUpperCase();
-          serverPlayerIds.add(id);
-          const localEntry = registry[id];
+          updatedRegistry[id] = {
+            studentId: id,
+            highScore: entry.highScore,
+            highestScoreDate: entry.highestScoreDate,
+            totalGames: entry.totalGames || registry[id]?.totalGames || 1,
+            level: entry.level || getLevelForScore(entry.highScore).level,
+          };
+        }
 
-          if (!localEntry || entry.highScore > localEntry.highScore) {
-            registry[id] = {
-              studentId: id,
-              highScore: entry.highScore,
-              highestScoreDate: entry.highestScoreDate,
-              totalGames: entry.totalGames || localEntry?.totalGames || 1,
-              level: entry.level || getLevelForScore(entry.highScore).level,
-            };
-          } else if (localEntry.highScore > entry.highScore) {
-            hasLocalUpdatesToSync = true;
+        saveLocalPlayersRegistry(updatedRegistry);
+
+        // Only sync if current user's local score is higher than server record
+        if (normId && registry[normId]) {
+          const serverCurrent = serverData.leaderboard.find((p) => p.studentId === normId);
+          if (!serverCurrent || registry[normId].highScore > serverCurrent.highScore) {
+            syncPlayersToServer({ [normId]: registry[normId] }).catch(() => {});
           }
         }
       }
 
-      for (const [id, localEntry] of Object.entries(registry)) {
-        if (!serverPlayerIds.has(id) && localEntry.highScore > 0) {
-          hasLocalUpdatesToSync = true;
-          break;
-        }
-      }
-
-      saveLocalPlayersRegistry(registry);
-
-      if (hasLocalUpdatesToSync || (serverData.leaderboard.length === 0 && Object.keys(registry).length > 0)) {
-        syncPlayersToServer(registry).catch(() => {});
-      }
-
-      const combined = getLocalLeaderboard(normId);
-      if (combined.leaderboard.length > 0) {
-        return combined;
-      }
       return serverData;
     }
   } catch (err) {
@@ -446,10 +438,14 @@ export async function syncPlayersToServer(registry: Record<string, StoredPlayer>
   }
 }
 
-// Automatic bootstrap sync on client initialization
+// Automatic bootstrap sync on client initialization (only syncs current student)
 export function initializeSync() {
+  const currentId = getSavedStudentId();
+  if (!currentId) return;
   const registry = getLocalPlayersRegistry();
-  if (Object.keys(registry).length > 0) {
-    syncPlayersToServer(registry).catch(() => {});
+  const current = registry[currentId];
+  if (current && current.highScore > 0) {
+    syncPlayersToServer({ [currentId]: current }).catch(() => {});
   }
 }
+
