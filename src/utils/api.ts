@@ -276,7 +276,6 @@ export async function submitScore(
   const now = new Date().toISOString();
   const deviceId = getDeviceId();
 
-  // 1. Immediately record in permanent local storage
   const registry = getLocalPlayersRegistry();
   const existing = registry[normId];
   const previousHighScore = existing ? existing.highScore : 0;
@@ -286,18 +285,7 @@ export async function submitScore(
   const calculatedLvl = getLevelForScore(newHighScore).level;
   const highestLevel = Math.max(existing?.level || 1, levelReached, calculatedLvl);
 
-  registry[normId] = {
-    studentId: normId,
-    highScore: newHighScore,
-    highestScoreDate: isNewHighScore ? now : (existing?.highestScoreDate || now),
-    totalGames,
-    level: highestLevel,
-  };
-  saveLocalPlayersRegistry(registry);
-
-  const localBoard = getLocalLeaderboard(normId);
-
-  // 2. Submit to server with Anti-Cheat session token, deviceId, and telemetry
+  // Submit to server with Anti-Cheat session token, deviceId, and telemetry
   try {
     const payload = {
       studentId: normId,
@@ -320,17 +308,25 @@ export async function submitScore(
 
     if (res.ok) {
       const data: SubmitScoreResponse = await res.json();
-      if (data.highScore >= newHighScore) {
-        registry[normId].highScore = data.highScore;
-        registry[normId].highestScoreDate = data.highestScoreDate || now;
-        registry[normId].level = Math.max(highestLevel, data.highestLevel || 1);
-        saveLocalPlayersRegistry(registry);
-      }
+      registry[normId] = {
+        studentId: normId,
+        highScore: data.highScore,
+        highestScoreDate: data.highestScoreDate || now,
+        totalGames,
+        level: Math.max(highestLevel, data.highestLevel || 1),
+      };
+      saveLocalPlayersRegistry(registry);
+
       return {
         ...data,
         level: levelReached,
         highestLevel: registry[normId].level,
       };
+    } else if (res.status === 400) {
+      const err = await res.json();
+      if (err.requireReload) {
+        throw new Error(`CLIENT_UPDATE_REQUIRED: ${err.message}`);
+      }
     } else if (res.status === 403) {
       const err = await res.json();
       if (err.banned) {
@@ -339,10 +335,10 @@ export async function submitScore(
       }
     }
   } catch (err: any) {
-    if (err.message && err.message.startsWith('DEVICE_BANNED')) {
+    if (err.message && (err.message.startsWith('DEVICE_BANNED') || err.message.startsWith('CLIENT_UPDATE_REQUIRED'))) {
       throw err;
     }
-    console.warn('Failed to submit score to server, saved locally:', err);
+    console.warn('Network issue submitting score:', err);
   }
 
   return {

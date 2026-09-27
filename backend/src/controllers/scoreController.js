@@ -176,7 +176,15 @@ export async function submitScore(req, res) {
         });
       }
 
-      // 4. Telemetry Round Count Verification (graceful for older cached client bundles)
+      // 4. Require verified telemetry for high scores (score >= 10)
+      if (score >= 10 && (!telemetry || telemetry.length === 0)) {
+        return res.status(400).json({
+          error: 'CLIENT_UPDATE_REQUIRED',
+          requireReload: true,
+          message: 'Your browser is running an outdated cached version of the game. Please refresh the page to record verified scores.',
+        });
+      }
+
       if (score >= 10 && telemetry.length > 0) {
         // Allow a small tolerance of 3 rounds for timeout/wrong-choice drops or network jitter
         const minExpected = Math.max(1, score - 3);
@@ -375,7 +383,6 @@ export async function submitScore(req, res) {
 
 export async function syncPlayers(req, res) {
   try {
-    const incomingPlayers = req.body.players;
     const deviceId = req.body.deviceId || req.headers['x-device-id'];
     const clientIp = getClientIp(req);
 
@@ -383,51 +390,9 @@ export async function syncPlayers(req, res) {
       return res.status(403).json({ error: 'DEVICE_BANNED', banned: true });
     }
 
-    if (!incomingPlayers || typeof incomingPlayers !== 'object') {
-      return res.status(400).json({ error: 'Invalid players payload' });
-    }
-
-    for (const [id, incoming] of Object.entries(incomingPlayers)) {
-      const studentId = normalizeId(id);
-      if (!studentId || studentId.length < 2) continue;
-
-      const incHigh = Math.max(0, Math.floor(Number(incoming?.highScore) || 0));
-      // Reject absurd cheated scores in sync (max 300)
-      if (incHigh > 300) continue;
-
-      const incDate = incoming?.highestScoreDate ? new Date(incoming.highestScoreDate) : new Date();
-      const incGames = Math.max(0, Math.floor(Number(incoming?.totalGames) || 0));
-      const incLevel = Math.max(1, Math.floor(Number(incoming?.level) || calculateLevel(incHigh)));
-
-      const existing = await Player.findOne({ studentId });
-      if (!existing) {
-        await Player.create({
-          studentId,
-          highScore: incHigh,
-          highestScoreDate: incDate,
-          totalGames: incGames || 1,
-          lastScore: incHigh,
-          lastPlayedAt: incDate,
-          level: incLevel,
-        });
-      } else if (!existing.disqualified) {
-        let changed = false;
-        if (incHigh > existing.highScore) {
-          existing.highScore = incHigh;
-          existing.highestScoreDate = incDate;
-          existing.level = Math.max(existing.level || 1, incLevel);
-          changed = true;
-        }
-        if (incGames > existing.totalGames) {
-          existing.totalGames = incGames;
-          changed = true;
-        }
-        if (changed) {
-          await existing.save();
-        }
-      }
-    }
-
+    // Security Hardening: MongoDB Atlas is the sole master of high scores.
+    // Unverified local caches from legacy browsers or hackers cannot directly write high scores into MongoDB.
+    // High scores can ONLY be registered through verified gameplay sessions at /api/score.
     const qualifiedPlayers = await Player.find({
       disqualified: false,
       highScore: { $lte: 500 },
@@ -447,6 +412,7 @@ export async function syncPlayers(req, res) {
 
     res.json({
       success: true,
+      message: 'Database is authoritative. Scores must be earned in verified game sessions.',
       totalPlayers: qualifiedPlayers.length,
       leaderboard: top10,
     });

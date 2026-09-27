@@ -24,8 +24,23 @@ export default function App() {
   const [gameOverData, setGameOverData] = useState<GameOverData | null>(null);
   const [banInfo, setBanInfo] = useState<BanInfo | null>(null);
 
-  // Initial Anti-Cheat check on mount
+  const CACHE_VERSION = 'v5_secure_db_2026';
+
+  // Initial Anti-Cheat check and stale local cache sanitization on mount
   useEffect(() => {
+    try {
+      const cachedVer = localStorage.getItem('coco_app_cache_version');
+      if (cachedVer !== CACHE_VERSION) {
+        // Clear all legacy unverified local storage caches
+        localStorage.removeItem('coco_permanent_scores_v3');
+        localStorage.removeItem('coco_players_registry_v2');
+        localStorage.removeItem('coco_players_registry');
+        localStorage.setItem('coco_app_cache_version', CACHE_VERSION);
+      }
+    } catch {
+      // Ignore
+    }
+
     initializeSync();
     checkDeviceBanStatus().then((info) => {
       if (info.isBanned) {
@@ -112,6 +127,11 @@ export default function App() {
       });
       setScreenState('GAME_OVER');
     } catch (err: any) {
+      if (err.message && err.message.startsWith('CLIENT_UPDATE_REQUIRED')) {
+        alert('The game has received a security update. Reloading to apply changes...');
+        window.location.reload();
+        return;
+      }
       if (err.message && err.message.startsWith('DEVICE_BANNED')) {
         const reason = err.message.replace('DEVICE_BANNED: ', '');
         setBanInfo({ isBanned: true, reason });
