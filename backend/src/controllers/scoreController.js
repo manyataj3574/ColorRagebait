@@ -176,13 +176,15 @@ export async function submitScore(req, res) {
         });
       }
 
-      // 4. Telemetry Round Count Verification
-      if (score >= 10) {
-        if (telemetry.length < score) {
+      // 4. Telemetry Round Count Verification (graceful for older cached client bundles)
+      if (score >= 10 && telemetry.length > 0) {
+        // Allow a small tolerance of 3 rounds for timeout/wrong-choice drops or network jitter
+        const minExpected = Math.max(1, score - 3);
+        if (telemetry.length < minExpected) {
           await banClient({
             deviceId: deviceId || session.deviceId,
             ip: clientIp,
-            reason: `Telemetry mismatch: claimed score ${score} with only ${telemetry.length} round audit proofs`,
+            reason: `Telemetry mismatch: claimed score ${score} with only ${telemetry.length} round audit proofs (minimum required: ${minExpected})`,
             studentId,
             userAgent,
             violationType: 'SCORE_MANIPULATION',
@@ -196,7 +198,7 @@ export async function submitScore(req, res) {
 
         // 5. Superhuman Reaction Speed check (consecutive < 160ms)
         const sub160Count = telemetry.filter((t) => Number(t.dt) < 160).length;
-        if (sub160Count > 2) {
+        if (sub160Count > 3) {
           await banClient({
             deviceId: deviceId || session.deviceId,
             ip: clientIp,
@@ -208,13 +210,13 @@ export async function submitScore(req, res) {
           return res.status(403).json({
             error: 'DEVICE_BANNED',
             banned: true,
-            reason: 'Superhuman bot reaction speed detected. Device and IP permanently banned.',
+            reason: 'Superhuman bot reaction speed detected. Device permanently banned.',
           });
         }
 
         // 6. Timing Variance Check (detect fixed-interval auto-clickers)
         const { stdDev } = calculateTimingStats(telemetry);
-        if (telemetry.length >= 15 && stdDev < 15) {
+        if (telemetry.length >= 20 && stdDev < 12) {
           await banClient({
             deviceId: deviceId || session.deviceId,
             ip: clientIp,
@@ -226,7 +228,7 @@ export async function submitScore(req, res) {
           return res.status(403).json({
             error: 'DEVICE_BANNED',
             banned: true,
-            reason: 'Automated script rhythm detected. Device and IP banned.',
+            reason: 'Automated script rhythm detected. Device banned.',
           });
         }
 

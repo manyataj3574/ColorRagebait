@@ -58,38 +58,44 @@ export async function initBannedCache() {
   }
 }
 
-export async function isDeviceOrIpBanned(deviceId, ip) {
+export async function isDeviceOrIpBanned(deviceId, ip, studentId) {
   const cleanDevice = deviceId ? String(deviceId).trim().toUpperCase() : '';
   const cleanIp = normalizeIp(ip);
+  const cleanStudent = studentId ? normalizeId(studentId) : '';
 
-  // 1. Fast cache check
-  if (cacheInitialized) {
-    if (cleanDevice && bannedDeviceCache.has(cleanDevice)) {
-      return await BannedDevice.findOne({ deviceId: cleanDevice }).lean();
+  // 1. Device ID ban check (instant)
+  if (cleanDevice && bannedDeviceCache.has(cleanDevice)) {
+    return await BannedDevice.findOne({ deviceId: cleanDevice }).lean();
+  }
+
+  // 2. Student ID ban check
+  if (cleanStudent) {
+    const studentBan = await BannedDevice.findOne({ studentId: cleanStudent }).lean();
+    if (studentBan) return studentBan;
+  }
+
+  // 3. IP Ban Check
+  if (cleanIp && cleanIp !== '127.0.0.1' && bannedIpCache.has(cleanIp)) {
+    const ipBan = await BannedDevice.findOne({
+      $or: [{ ip: cleanIp }, { knownIps: cleanIp }],
+    }).lean();
+
+    if (ipBan) {
+      // If it's a strict whole-network ban (e.g. DDoS / API brute-force / manual admin IP ban)
+      if (ipBan.violationType === 'BOT_NETWORK' || ipBan.deviceId?.startsWith('IP-BAN-')) {
+        return ipBan;
+      }
+      // On shared campus NAT Wi-Fi, block if it matches the banned student or device
+      if (cleanStudent && ipBan.studentId === cleanStudent) {
+        return ipBan;
+      }
+      if (cleanDevice && ipBan.deviceId === cleanDevice) {
+        return ipBan;
+      }
     }
-    if (cleanIp && bannedIpCache.has(cleanIp) && cleanIp !== '127.0.0.1') {
-      return await BannedDevice.findOne({
-        $or: [{ ip: cleanIp }, { knownIps: cleanIp }],
-      }).lean();
-    }
   }
 
-  // 2. Database check
-  const query = [];
-  if (cleanDevice) query.push({ deviceId: cleanDevice });
-  if (cleanIp && cleanIp !== '127.0.0.1') {
-    query.push({ ip: cleanIp });
-    query.push({ knownIps: cleanIp });
-  }
-
-  if (query.length === 0) return null;
-
-  const ban = await BannedDevice.findOne({ $or: query }).lean();
-  if (ban) {
-    if (ban.deviceId) bannedDeviceCache.add(ban.deviceId.toUpperCase());
-    if (ban.ip) bannedIpCache.add(normalizeIp(ban.ip));
-  }
-  return ban;
+  return null;
 }
 
 export async function banClient({ deviceId, ip, reason, studentId, userAgent, violationType = 'MANUAL_ADMIN' }) {
@@ -158,8 +164,9 @@ export async function antiCheatMiddleware(req, res, next) {
     (req.query.deviceId);
 
   const clientIp = getClientIp(req);
+  const studentId = req.body?.studentId || req.params?.studentId || req.query?.studentId;
 
-  const ban = await isDeviceOrIpBanned(deviceId, clientIp);
+  const ban = await isDeviceOrIpBanned(deviceId, clientIp, studentId);
   if (ban) {
     return res.status(403).json({
       error: 'DEVICE_BANNED',
