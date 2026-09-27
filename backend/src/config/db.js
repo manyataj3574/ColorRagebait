@@ -5,12 +5,15 @@ import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+// Load environment variables from backend/.env or root .env
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
-
-const DEFAULT_URI = 'mongodb+srv://jaiswalmanyata551_db_user:METjyqxfghMAnsIT@cluster0.lim91cw.mongodb.net/color_ragebait?retryWrites=true&w=majority';
+dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
 
 export async function connectDB() {
-  const uri = process.env.MONGODB_URI || DEFAULT_URI;
+  const uri = process.env.MONGODB_URI;
+  if (!uri) {
+    throw new Error('MONGODB_URI environment variable is missing or empty.');
+  }
   
   try {
     const conn = await mongoose.connect(uri);
