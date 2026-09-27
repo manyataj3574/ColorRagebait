@@ -1,37 +1,93 @@
 {
   "players": {
-    "23CSE041": {
-      "studentId": "23CSE041",
-      "highScore": 120,
-      "highestScoreDate": "2026-09-27T09:32:04.233Z",
-      "totalGames": 3,
-      "lastScore": 120,
-      "lastPlayedAt": "2026-09-27T09:32:04.233Z",
-      "level": 9
-    },
-    "23CSE017": {
-      "studentId": "23CSE017",
-      "highScore": 30,
-      "highestScoreDate": "2026-09-27T08:00:00Z",
-      "totalGames": 2,
-      "lastScore": 30,
-      "lastPlayedAt": "2026-09-27T08:00:00Z"
+    "26B11HACKUR": {
+      "studentId": "26B11HACKUR",
+      "highScore": 165,
+      "highestScoreDate": "2026-09-27T08:00:00.000Z",
+      "totalGames": 5,
+      "lastScore": 165,
+      "lastPlayedAt": "2026-09-27T08:00:00.000Z",
+      "level": 12
     },
     "26I1039": {
       "studentId": "26I1039",
-      "highScore": 0,
-      "highestScoreDate": "2026-09-27T08:22:48.451Z",
-      "totalGames": 1,
-      "lastScore": 0,
-      "lastPlayedAt": "2026-09-27T08:22:48.451Z"
+      "highScore": 121,
+      "highestScoreDate": "2026-09-27T08:15:00.000Z",
+      "totalGames": 4,
+      "lastScore": 121,
+      "lastPlayedAt": "2026-09-27T08:15:00.000Z",
+      "level": 9
+    },
+    "23CSE041": {
+      "studentId": "23CSE041",
+      "highScore": 120,
+      "highestScoreDate": "2026-09-27T08:30:00.000Z",
+      "totalGames": 3,
+      "lastScore": 120,
+      "lastPlayedAt": "2026-09-27T08:30:00.000Z",
+      "level": 9
+    },
+    "26B1064": {
+      "studentId": "26B1064",
+      "highScore": 111,
+      "highestScoreDate": "2026-09-27T08:45:00.000Z",
+      "totalGames": 4,
+      "lastScore": 111,
+      "lastPlayedAt": "2026-09-27T08:45:00.000Z",
+      "level": 8
+    },
+    "26B1112": {
+      "studentId": "26B1112",
+      "highScore": 83,
+      "highestScoreDate": "2026-09-27T09:00:00.000Z",
+      "totalGames": 3,
+      "lastScore": 83,
+      "lastPlayedAt": "2026-09-27T09:00:00.000Z",
+      "level": 6
+    },
+    "25E3065": {
+      "studentId": "25E3065",
+      "highScore": 81,
+      "highestScoreDate": "2026-09-27T09:15:00.000Z",
+      "totalGames": 2,
+      "lastScore": 81,
+      "lastPlayedAt": "2026-09-27T09:15:00.000Z",
+      "level": 6
+    },
+    "23I7187": {
+      "studentId": "23I7187",
+      "highScore": 73,
+      "highestScoreDate": "2026-09-27T09:30:00.000Z",
+      "totalGames": 2,
+      "lastScore": 73,
+      "lastPlayedAt": "2026-09-27T09:30:00.000Z",
+      "level": 5
+    },
+    "26B1111": {
+      "studentId": "26B1111",
+      "highScore": 61,
+      "highestScoreDate": "2026-09-27T09:45:00.000Z",
+      "totalGames": 3,
+      "lastScore": 61,
+      "lastPlayedAt": "2026-09-27T09:45:00.000Z",
+      "level": 5
     },
     "DE24343": {
       "studentId": "DE24343",
-      "highScore": 39,
-      "highestScoreDate": "2026-09-27T19:11:07.040Z",
+      "highScore": 47,
+      "highestScoreDate": "2026-09-27T10:00:00.000Z",
+      "totalGames": 2,
+      "lastScore": 47,
+      "lastPlayedAt": "2026-09-27T10:00:00.000Z",
+      "level": 4
+    },
+    "NIGGA69GOD": {
+      "studentId": "NIGGA69GOD",
+      "highScore": 38,
+      "highestScoreDate": "2026-09-27T10:15:00.000Z",
       "totalGames": 1,
-      "lastScore": 39,
-      "lastPlayedAt": "2026-09-27T19:11:07.040Z",
+      "lastScore": 38,
+      "lastPlayedAt": "2026-09-27T10:15:00.000Z",
       "level": 3
     }
   }
