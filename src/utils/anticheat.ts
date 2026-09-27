@@ -62,13 +62,15 @@ export function markDeviceBannedLocally(reason: string) {
   }
 }
 
+const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+
 // Report and execute server device ban
 export async function reportAndBanDevice(studentId: string, reason: string): Promise<void> {
   markDeviceBannedLocally(reason);
   const deviceId = getDeviceId();
 
   try {
-    await fetch('/api/anticheat/ban', {
+    await fetch(`${API_BASE}/api/anticheat/ban`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

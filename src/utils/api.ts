@@ -4,6 +4,7 @@ import { getDeviceId, isDeviceBannedLocally, markDeviceBannedLocally } from './a
 
 const STORAGE_KEY_STUDENT_ID = 'coco_student_id';
 const STORAGE_KEY_PLAYERS = 'coco_permanent_scores_v3';
+const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
 // Current active round verification token
 let currentSession: { sessionId: string; token: string; studentId: string } | null = null;
@@ -38,7 +39,7 @@ export async function startVerifiedGameSession(studentId: string): Promise<boole
   const deviceId = getDeviceId();
 
   try {
-    const res = await fetch('/api/game/start', {
+    const res = await fetch(`${API_BASE}/api/game/start`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -89,7 +90,7 @@ export async function checkDeviceBanStatus(): Promise<BanInfo> {
   }
 
   try {
-    const res = await fetch(`/api/anticheat/check?deviceId=${encodeURIComponent(deviceId)}`, {
+    const res = await fetch(`${API_BASE}/api/anticheat/check?deviceId=${encodeURIComponent(deviceId)}`, {
       headers: { 'x-device-id': deviceId },
     });
     if (res.ok) {
@@ -212,7 +213,7 @@ export async function fetchPlayer(studentId: string): Promise<PlayerProfile> {
   const deviceId = getDeviceId();
 
   try {
-    const res = await fetch(`/api/player/${encodeURIComponent(normId)}`, {
+    const res = await fetch(`${API_BASE}/api/player/${encodeURIComponent(normId)}`, {
       headers: { 'x-device-id': deviceId },
     });
     if (res.ok) {
@@ -306,7 +307,7 @@ export async function submitScore(
       token: currentSession?.token,
     };
 
-    const res = await fetch('/api/score', {
+    const res = await fetch(`${API_BASE}/api/score`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -371,8 +372,8 @@ export async function fetchLeaderboard(studentId?: string): Promise<LeaderboardR
 
   try {
     const url = normId
-      ? `/api/leaderboard?studentId=${encodeURIComponent(normId)}`
-      : '/api/leaderboard';
+      ? `${API_BASE}/api/leaderboard?studentId=${encodeURIComponent(normId)}`
+      : `${API_BASE}/api/leaderboard`;
     const res = await fetch(url, {
       headers: { 'x-device-id': deviceId },
     });
@@ -432,7 +433,7 @@ export async function fetchLeaderboard(studentId?: string): Promise<LeaderboardR
 export async function syncPlayersToServer(registry: Record<string, StoredPlayer>) {
   const deviceId = getDeviceId();
   try {
-    await fetch('/api/sync', {
+    await fetch(`${API_BASE}/api/sync`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
