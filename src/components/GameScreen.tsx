@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { ColorItem, GameOverData, GameQuestion, BanInfo } from '../types';
+import { ColorItem, GameOverData, GameQuestion, BanInfo, RoundTelemetry } from '../types';
 import { generateQuestion } from '../utils/colors';
 import { getLevelForScore, getTimeLimitForScore } from '../utils/levels';
 import { soundManager } from '../utils/audio';
-import { reportAndBanDevice, getDeviceId } from '../utils/anticheat';
+import { reportAndBanDevice, getDeviceId, startAntiCheatWatchdog } from '../utils/anticheat';
 import { Zap, Sparkles, ShieldCheck } from 'lucide-react';
 
 interface GameScreenProps {
@@ -45,6 +45,17 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   const scoreRef = useRef<number>(0);
   const currentQuestionRef = useRef<GameQuestion>(question);
   const isGameOverRef = useRef<boolean>(false);
+  const telemetryRef = useRef<RoundTelemetry[]>([]);
+
+  // Start continuous anti-cheat scanner
+  useEffect(() => {
+    const stopWatchdog = startAntiCheatWatchdog(studentId, (reason) => {
+      onDeviceBanned({ isBanned: true, reason, deviceId: getDeviceId() });
+    });
+    return () => {
+      stopWatchdog();
+    };
+  }, [studentId, onDeviceBanned]);
 
   currentQuestionRef.current = question;
   scoreRef.current = score;
@@ -104,6 +115,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           selectedColor: wrongColor,
           correctColor: currentQ.inkColor,
           wordColor: currentQ.wordColor,
+          telemetry: telemetryRef.current,
         });
       }, 550);
     },
@@ -153,11 +165,21 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   const handleSelectColor = useCallback(
     async (chosenColor: ColorItem, event?: React.MouseEvent | KeyboardEvent) => {
       // 1. Anti-Cheat Check: Synthetic event (auto-clicker or script using element.click())
-      if (event && event.isTrusted === false) {
-        const reason = 'Synthetic automated click event detected (Bot Script / Auto-clicker)';
-        await reportAndBanDevice(studentId, reason);
-        onDeviceBanned({ isBanned: true, reason, deviceId: getDeviceId() });
-        return;
+      if (event) {
+        if (event.isTrusted === false) {
+          const reason = 'Synthetic automated click event detected (Bot Script / Auto-clicker)';
+          await reportAndBanDevice(studentId, reason, 'SYNTHETIC_CLICK');
+          onDeviceBanned({ isBanned: true, reason, deviceId: getDeviceId() });
+          return;
+        }
+
+        // Real human mouse clicks in browsers have detail >= 1. Synthetic .click() sets detail: 0
+        if ('detail' in event && event.detail === 0 && !('key' in event)) {
+          const reason = 'Synthetic click dispatch detected (element.click() without human cursor)';
+          await reportAndBanDevice(studentId, reason, 'SYNTHETIC_CLICK');
+          onDeviceBanned({ isBanned: true, reason, deviceId: getDeviceId() });
+          return;
+        }
       }
 
       // 2. Anti-Cheat Check: 300ms Click Lock Buffer ("button ka click 300ms ke bad enable karo")
@@ -167,7 +189,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         // If an automated script violently spams clicks in the locked buffer:
         if (rapidLockedClicksRef.current > 4) {
           const reason = 'Rapid click spam during locked buffer (Auto-clicker Bot Script)';
-          await reportAndBanDevice(studentId, reason);
+          await reportAndBanDevice(studentId, reason, 'SYNTHETIC_CLICK');
           onDeviceBanned({ isBanned: true, reason, deviceId: getDeviceId() });
         }
         return; // Ignore and block any click before 300ms!
@@ -178,7 +200,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         sub170StrikesRef.current++;
         if (sub170StrikesRef.current >= 3) {
           const reason = `Superhuman reaction speed (${elapsedMs}ms consecutive answers below human physiological threshold)`;
-          await reportAndBanDevice(studentId, reason);
+          await reportAndBanDevice(studentId, reason, 'SPEEDHACK');
           onDeviceBanned({ isBanned: true, reason, deviceId: getDeviceId() });
           return;
         }
@@ -190,6 +212,16 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       const isCorrect = chosenColor.id === currentQ.inkColor.id;
 
       if (isCorrect) {
+        // Record round telemetry for anti-cheat verification
+        const clickX = event && 'clientX' in event ? event.clientX : Math.floor(window.innerWidth / 2);
+        const clickY = event && 'clientY' in event ? event.clientY : Math.floor(window.innerHeight / 2);
+        telemetryRef.current.push({
+          q: scoreRef.current + 1,
+          dt: elapsedMs,
+          x: Math.round(clickX),
+          y: Math.round(clickY),
+          trusted: Boolean(event ? event.isTrusted : true),
+        });
         // Correct answer!
         const prevLevel = getLevelForScore(scoreRef.current);
         const nextScore = scoreRef.current + 1;
@@ -398,6 +430,30 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           )}
         </div>
       </div>
+
+      {/* Anti-Bot Honeypot Decoy Trap: Invisible to humans, tempting to DOM scraper bots */}
+      <button
+        tabIndex={-1}
+        aria-hidden="true"
+        onClick={() => {
+          const reason = 'Honeypot DOM bot trap triggered (DOM-scraping Browser Extension / Bot)';
+          reportAndBanDevice(studentId, reason, 'HONEYPOT');
+          onDeviceBanned({ isBanned: true, reason, deviceId: getDeviceId() });
+        }}
+        style={{
+          opacity: 0.0001,
+          position: 'absolute',
+          top: '-9999px',
+          left: '-9999px',
+          pointerEvents: 'auto',
+          width: '1px',
+          height: '1px',
+        }}
+        data-color-target="true"
+        className="btn-color-option bg-emerald-500"
+      >
+        {question.inkColor.name}
+      </button>
 
       {/* Large Colour Answer Buttons (300ms reaction delay enforced) */}
       <div className="w-full grid grid-cols-2 gap-3 mt-3">

@@ -1,23 +1,24 @@
-import { isDeviceBanned, banDevice } from '../middleware/antiCheat.js';
+import { isDeviceOrIpBanned, banClient, getClientIp } from '../middleware/antiCheat.js';
+import { BannedDevice } from '../models/BannedDevice.js';
+import { Player } from '../models/Player.js';
 
 export async function checkDeviceStatus(req, res) {
   try {
     const deviceId = req.query.deviceId || req.headers['x-device-id'];
-    if (!deviceId) {
-      return res.json({ banned: false });
-    }
+    const clientIp = getClientIp(req);
 
-    const ban = await isDeviceBanned(deviceId);
+    const ban = await isDeviceOrIpBanned(deviceId, clientIp);
     if (ban) {
       return res.json({
         banned: true,
         reason: ban.reason,
         bannedAt: ban.bannedAt,
         deviceId: ban.deviceId,
+        ip: clientIp,
       });
     }
 
-    res.json({ banned: false });
+    res.json({ banned: false, ip: clientIp });
   } catch (error) {
     console.error('[Anti-Cheat Check Error]', error);
     res.status(500).json({ error: 'Failed to check ban status' });
@@ -30,22 +31,71 @@ export async function reportAndBanDevice(req, res) {
     const reason = req.body.reason || 'Anti-Cheat violation detected';
     const studentId = req.body.studentId;
     const userAgent = req.body.userAgent || req.headers['user-agent'];
+    const violationType = req.body.violationType || 'SYNTHETIC_CLICK';
+    const clientIp = getClientIp(req);
 
-    if (!deviceId) {
-      return res.status(400).json({ error: 'Device ID required' });
+    if (!deviceId && !clientIp) {
+      return res.status(400).json({ error: 'Device ID or IP required' });
     }
 
-    const ban = await banDevice(deviceId, reason, studentId, req.ip, userAgent);
+    const ban = await banClient({
+      deviceId,
+      ip: clientIp,
+      reason,
+      studentId,
+      userAgent,
+      violationType,
+    });
 
     res.json({
       success: true,
       banned: true,
-      deviceId: String(deviceId).trim().toUpperCase(),
+      deviceId: String(deviceId || clientIp).trim().toUpperCase(),
+      ip: clientIp,
       reason,
       bannedAt: ban ? ban.bannedAt : new Date(),
     });
   } catch (error) {
     console.error('[Anti-Cheat Ban Error]', error);
-    res.status(500).json({ error: 'Failed to record device ban' });
+    res.status(500).json({ error: 'Failed to record device/IP ban' });
+  }
+}
+
+// Admin ban / unban endpoint
+export async function adminManageBan(req, res) {
+  try {
+    const adminKey = req.headers['x-admin-key'] || req.body?.adminKey;
+    const expectedKey = process.env.ADMIN_SECRET || 'coco_admin_secure_key_2026';
+
+    if (!adminKey || adminKey !== expectedKey) {
+      return res.status(401).json({ error: 'Unauthorized: Invalid Admin Key' });
+    }
+
+    const { action, targetId, reason } = req.body;
+
+    if (action === 'unban') {
+      // Target can be deviceId, studentId, or IP
+      await BannedDevice.deleteMany({
+        $or: [{ deviceId: targetId }, { studentId: targetId }, { ip: targetId }],
+      });
+      if (targetId) {
+        await Player.updateMany({ studentId: targetId }, { disqualified: false });
+      }
+      return res.json({ success: true, message: `Unbanned target: ${targetId}` });
+    }
+
+    if (action === 'ban') {
+      const ban = await banClient({
+        deviceId: `ADMIN-BAN-${targetId}`,
+        studentId: targetId,
+        reason: reason || 'Manual Admin Ban',
+        violationType: 'MANUAL_ADMIN',
+      });
+      return res.json({ success: true, ban });
+    }
+
+    res.status(400).json({ error: 'Invalid action: use "ban" or "unban"' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 }

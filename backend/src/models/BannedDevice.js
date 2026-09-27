@@ -14,6 +14,7 @@ const bannedDeviceSchema = new mongoose.Schema(
       type: String,
       trim: true,
       uppercase: true,
+      index: true,
     },
     reason: {
       type: String,
@@ -25,9 +26,21 @@ const bannedDeviceSchema = new mongoose.Schema(
     },
     ip: {
       type: String,
+      trim: true,
+      index: true,
+    },
+    knownIps: {
+      type: [String],
+      default: [],
+      index: true,
     },
     userAgent: {
       type: String,
+    },
+    violationType: {
+      type: String,
+      enum: ['EXTENSION', 'SPEEDHACK', 'SYNTHETIC_CLICK', 'TIMING_SUPERHUMAN', 'HONEYPOT', 'FORGED_SESSION', 'SCORE_MANIPULATION', 'MANUAL_ADMIN'],
+      default: 'MANUAL_ADMIN',
     },
   },
   {

@@ -3,11 +3,11 @@ import { antiCheatMiddleware } from '../middleware/antiCheat.js';
 import { getLeaderboard } from '../controllers/leaderboardController.js';
 import { getPlayerProfile, registerPlayer } from '../controllers/playerController.js';
 import { startGameSession, submitScore, syncPlayers } from '../controllers/scoreController.js';
-import { checkDeviceStatus, reportAndBanDevice } from '../controllers/antiCheatController.js';
+import { checkDeviceStatus, reportAndBanDevice, adminManageBan } from '../controllers/antiCheatController.js';
 
 const router = express.Router();
 
-// Apply anti-cheat device ban middleware
+// Apply anti-cheat device and IP ban middleware
 router.use(antiCheatMiddleware);
 
 // Health check
@@ -18,6 +18,7 @@ router.get('/health', (_req, res) => {
 // Anti-Cheat Endpoints
 router.get('/anticheat/check', checkDeviceStatus);
 router.post('/anticheat/ban', reportAndBanDevice);
+router.post('/anticheat/admin/manage', adminManageBan);
 
 // Game Session Endpoints
 router.post('/game/start', startGameSession);

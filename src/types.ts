@@ -58,6 +58,14 @@ export interface SubmitScoreResponse {
   highestLevel?: number;
 }
 
+export interface RoundTelemetry {
+  q: number;
+  dt: number;
+  x: number;
+  y: number;
+  trusted: boolean;
+}
+
 export interface GameOverData {
   score: number;
   level: number;
@@ -71,6 +79,7 @@ export interface GameOverData {
   selectedColor?: ColorItem;
   correctColor: ColorItem;
   wordColor: ColorItem;
+  telemetry?: RoundTelemetry[];
 }
 
 export interface BanInfo {

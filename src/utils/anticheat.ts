@@ -1,12 +1,12 @@
 const STORAGE_KEY_DEVICE_ID = 'coco_device_fingerprint_v1';
 const STORAGE_KEY_BAN = 'coco_device_banned_flag';
+const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
 // Generate or retrieve unique device fingerprint
 export function getDeviceId(): string {
   try {
     let deviceId = localStorage.getItem(STORAGE_KEY_DEVICE_ID);
     if (!deviceId) {
-      // Build a hardware-linked fingerprint hash
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       let canvasSig = 'canvas_off';
@@ -16,13 +16,14 @@ export function getDeviceId(): string {
         ctx.fillStyle = '#f60';
         ctx.fillRect(125, 1, 62, 20);
         ctx.fillStyle = '#069';
-        ctx.fillText('COCO_AC_FINGERPRINT', 2, 15);
+        ctx.fillText('COCO_AC_FINGERPRINT_V2', 2, 15);
         canvasSig = canvas.toDataURL().slice(-30);
       }
 
       const screenSig = `${window.screen.width}x${window.screen.height}x${window.screen.colorDepth}`;
+      const navSig = `${navigator.hardwareConcurrency || 4}-${navigator.language || 'en'}`;
       const randomSeed = Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
-      deviceId = `DEV-${btoa(`${screenSig}-${randomSeed}-${canvasSig}`).replace(/[^a-zA-Z0-9]/g, '').substring(0, 24).toUpperCase()}`;
+      deviceId = `DEV-${btoa(`${screenSig}-${navSig}-${randomSeed}-${canvasSig}`).replace(/[^a-zA-Z0-9]/g, '').substring(0, 28).toUpperCase()}`;
       localStorage.setItem(STORAGE_KEY_DEVICE_ID, deviceId);
     }
     return deviceId;
@@ -62,21 +63,27 @@ export function markDeviceBannedLocally(reason: string) {
   }
 }
 
-const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
-
-// Report and execute server device ban
-export async function reportAndBanDevice(studentId: string, reason: string): Promise<void> {
+// Report and execute server device + IP ban
+export async function reportAndBanDevice(
+  studentId: string,
+  reason: string,
+  violationType: string = 'SYNTHETIC_CLICK'
+): Promise<void> {
   markDeviceBannedLocally(reason);
   const deviceId = getDeviceId();
 
   try {
     await fetch(`${API_BASE}/api/anticheat/ban`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-device-id': deviceId,
+      },
       body: JSON.stringify({
         deviceId,
         studentId,
         reason,
+        violationType,
         userAgent: navigator.userAgent,
         timestamp: new Date().toISOString(),
       }),
@@ -86,7 +93,7 @@ export async function reportAndBanDevice(studentId: string, reason: string): Pro
   }
 }
 
-// Check if native functions have been hooked / monkey-patched by an extension
+// Check if a native browser function has been modified or hooked
 function isNativeFunctionHooked(fn: any): boolean {
   try {
     if (!fn) return false;
@@ -97,8 +104,58 @@ function isNativeFunctionHooked(fn: any): boolean {
   }
 }
 
+// Hardware Audio Clock for Speedhack Detection
+let audioCtx: AudioContext | null = null;
+let lastAudioCheckTime = 0;
+let lastPerfCheckTime = 0;
+
+export function checkSpeedhackClockSkew(): { detected: boolean; reason?: string } {
+  try {
+    if (typeof window.AudioContext === 'undefined' && typeof (window as any).webkitAudioContext === 'undefined') {
+      return { detected: false };
+    }
+
+    if (!audioCtx) {
+      const AudioConstructor = window.AudioContext || (window as any).webkitAudioContext;
+      audioCtx = new AudioConstructor();
+      lastAudioCheckTime = audioCtx.currentTime;
+      lastPerfCheckTime = performance.now();
+      return { detected: false };
+    }
+
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume().catch(() => {});
+    }
+
+    const currentAudioTime = audioCtx.currentTime;
+    const currentPerfTime = performance.now();
+
+    const audioElapsedSec = currentAudioTime - lastAudioCheckTime;
+    const perfElapsedSec = (currentPerfTime - lastPerfCheckTime) / 1000;
+
+    // Only test if at least 1.5 seconds has elapsed
+    if (audioElapsedSec >= 1.5 && perfElapsedSec >= 1.5) {
+      const ratio = perfElapsedSec / audioElapsedSec;
+      lastAudioCheckTime = currentAudioTime;
+      lastPerfCheckTime = currentPerfTime;
+
+      // If wall/perf clock runs 1.4x faster or slower than hardware audio clock -> Speedhack active!
+      if (ratio > 1.45 || ratio < 0.65) {
+        return {
+          detected: true,
+          reason: `Speedhack clock manipulation detected: Time dilation ratio ${ratio.toFixed(2)}x deviates from hardware clock.`,
+        };
+      }
+    }
+  } catch {
+    // Ignore audio clock errors
+  }
+
+  return { detected: false };
+}
+
 // Detect browser extensions, userscripts, auto-clickers, and DOM injectors
-export function scanForExtensionsAndCheats(): { detected: boolean; reason?: string } {
+export function scanForExtensionsAndCheats(): { detected: boolean; reason?: string; violationType?: string } {
   const win = window as any;
 
   // 1. Detect Tampermonkey / Greasemonkey / Violentmonkey global objects
@@ -116,6 +173,7 @@ export function scanForExtensionsAndCheats(): { detected: boolean; reason?: stri
     return {
       detected: true,
       reason: 'Browser Extension Detected: Tampermonkey / Greasemonkey Userscript Injector found in runtime window.',
+      violationType: 'EXTENSION',
     };
   }
 
@@ -132,6 +190,7 @@ export function scanForExtensionsAndCheats(): { detected: boolean; reason?: stri
         return {
           detected: true,
           reason: `Browser Extension Script Injected: ${src.substring(0, 45)}...`,
+          violationType: 'EXTENSION',
         };
       }
     }
@@ -141,22 +200,25 @@ export function scanForExtensionsAndCheats(): { detected: boolean; reason?: stri
       document.querySelector('[id*="tampermonkey"]') ||
       document.querySelector('[class*="violentmonkey"]') ||
       document.querySelector('[data-extension-id]') ||
-      document.querySelector('[id*="autoclick"]')
+      document.querySelector('[id*="autoclick"]') ||
+      document.querySelector('[class*="autoclick"]')
     ) {
       return {
         detected: true,
         reason: 'Automated Browser Extension / Auto-Clicker DOM element detected.',
+        violationType: 'EXTENSION',
       };
     }
   } catch {
-    // Ignore DOM query issues
+    // Ignore DOM issues
   }
 
-  // 3. Check for hooked native APIs (Extensions frequently hook fetch, setTimeout, addEventListener)
+  // 3. Check for hooked native APIs
   if (isNativeFunctionHooked(window.fetch)) {
     return {
       detected: true,
       reason: 'Browser Extension Detected: window.fetch has been modified/hooked.',
+      violationType: 'EXTENSION',
     };
   }
 
@@ -164,13 +226,15 @@ export function scanForExtensionsAndCheats(): { detected: boolean; reason?: stri
     return {
       detected: true,
       reason: 'Browser Extension Detected: addEventListener prototype has been altered.',
+      violationType: 'EXTENSION',
     };
   }
 
-  if (isNativeFunctionHooked(Function.prototype.toString)) {
+  if (isNativeFunctionHooked(HTMLButtonElement.prototype.click)) {
     return {
       detected: true,
-      reason: 'Browser Extension Detected: Function.prototype.toString has been spoofed.',
+      reason: 'Browser Extension Detected: button.click prototype has been modified.',
+      violationType: 'EXTENSION',
     };
   }
 
@@ -186,15 +250,38 @@ export function scanForExtensionsAndCheats(): { detected: boolean; reason?: stri
     return {
       detected: true,
       reason: 'Headless Browser Automation / WebDriver bot detected.',
+      violationType: 'SYNTHETIC_CLICK',
+    };
+  }
+
+  // 5. Check hardware audio clock skew for speedhacks
+  const speedCheck = checkSpeedhackClockSkew();
+  if (speedCheck.detected) {
+    return {
+      detected: true,
+      reason: speedCheck.reason,
+      violationType: 'SPEEDHACK',
     };
   }
 
   return { detected: false };
 }
 
-// Anti-Cheat validation helpers
-export const ANTI_CHEAT = {
-  MIN_BUTTON_CLICK_DELAY_MS: 300, // 300ms button click enable delay
-  MIN_HUMAN_REACTION_MS: 160,     // Physical human limit for Stroop color cognition
-  MAX_SUB_200MS_STRIKES: 2,       // More than 2 superhuman strikes = cheat
-};
+// Continuous anti-cheat watchdog during gameplay
+export function startAntiCheatWatchdog(
+  studentId: string,
+  onBanned: (reason: string) => void
+): () => void {
+  const intervalId = window.setInterval(() => {
+    const scan = scanForExtensionsAndCheats();
+    if (scan.detected && scan.reason) {
+      clearInterval(intervalId);
+      reportAndBanDevice(studentId, scan.reason, scan.violationType || 'EXTENSION');
+      onBanned(scan.reason);
+    }
+  }, 1200);
+
+  return () => {
+    clearInterval(intervalId);
+  };
+}

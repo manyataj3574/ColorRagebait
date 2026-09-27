@@ -1,4 +1,4 @@
-import { LeaderboardEntry, PlayerProfile, SubmitScoreResponse, BanInfo } from '../types';
+import { LeaderboardEntry, PlayerProfile, SubmitScoreResponse, BanInfo, RoundTelemetry } from '../types';
 import { getLevelForScore } from './levels';
 import { getDeviceId, isDeviceBannedLocally, markDeviceBannedLocally } from './anticheat';
 
@@ -269,7 +269,8 @@ export async function fetchPlayer(studentId: string): Promise<PlayerProfile> {
 export async function submitScore(
   studentId: string,
   score: number,
-  levelReached: number = 1
+  levelReached: number = 1,
+  telemetry: RoundTelemetry[] = []
 ): Promise<SubmitScoreResponse> {
   const normId = studentId.trim().toUpperCase();
   const now = new Date().toISOString();
@@ -296,7 +297,7 @@ export async function submitScore(
 
   const localBoard = getLocalLeaderboard(normId);
 
-  // 2. Submit to server with Anti-Cheat session token and deviceId
+  // 2. Submit to server with Anti-Cheat session token, deviceId, and telemetry
   try {
     const payload = {
       studentId: normId,
@@ -305,6 +306,7 @@ export async function submitScore(
       deviceId,
       sessionId: currentSession?.sessionId,
       token: currentSession?.token,
+      telemetry,
     };
 
     const res = await fetch(`${API_BASE}/api/score`, {

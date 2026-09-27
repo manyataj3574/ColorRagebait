@@ -12,14 +12,24 @@ const gameSessionSchema = new mongoose.Schema({
     required: true,
     uppercase: true,
     trim: true,
+    index: true,
   },
   deviceId: {
     type: String,
     required: true,
     uppercase: true,
     trim: true,
+    index: true,
+  },
+  ip: {
+    type: String,
+    trim: true,
   },
   token: {
+    type: String,
+    required: true,
+  },
+  sessionSecret: {
     type: String,
     required: true,
   },

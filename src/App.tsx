@@ -84,7 +84,12 @@ export default function App() {
   // Called when round finishes (wrong choice or timeout)
   const handleGameOver = async (preliminaryData: GameOverData) => {
     try {
-      const res = await submitScore(studentId, preliminaryData.score, preliminaryData.level);
+      const res = await submitScore(
+        studentId,
+        preliminaryData.score,
+        preliminaryData.level,
+        preliminaryData.telemetry || []
+      );
       const finalGameOverData: GameOverData = {
         ...preliminaryData,
         isNewHighScore: res.isNewHighScore,

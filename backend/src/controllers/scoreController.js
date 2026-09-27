@@ -1,12 +1,55 @@
+import crypto from 'node:crypto';
 import { Player } from '../models/Player.js';
 import { GameSession } from '../models/GameSession.js';
-import { banDevice, isDeviceBanned } from '../middleware/antiCheat.js';
+import { banClient, isDeviceOrIpBanned, getClientIp } from '../middleware/antiCheat.js';
 import { calculateLevel, normalizeId } from '../utils/levels.js';
+
+// Calculate variance and standard deviation of reaction times
+function calculateTimingStats(telemetry) {
+  if (!telemetry || telemetry.length < 5) return { stdDev: 100, avg: 400 };
+  const dts = telemetry.map((t) => Number(t.dt) || 0).filter((dt) => dt > 0);
+  if (dts.length < 5) return { stdDev: 100, avg: 400 };
+
+  const avg = dts.reduce((a, b) => a + b, 0) / dts.length;
+  const variance = dts.reduce((sum, dt) => sum + Math.pow(dt - avg, 2), 0) / dts.length;
+  return { stdDev: Math.sqrt(variance), avg };
+}
+
+// Check coordinate entropy (detect identical click positions or element.click 0,0)
+function checkCoordinateAuthenticity(telemetry) {
+  if (!telemetry || telemetry.length < 8) return { authentic: true };
+
+  let zeroCount = 0;
+  const uniquePositions = new Set();
+
+  for (const t of telemetry) {
+    const x = Math.round(Number(t.x) || 0);
+    const y = Math.round(Number(t.y) || 0);
+
+    if (x === 0 && y === 0) {
+      zeroCount++;
+    }
+    uniquePositions.add(`${x},${y}`);
+  }
+
+  // If more than 30% of clicks are at 0,0 (synthetic event.click())
+  if (zeroCount > 2 && zeroCount / telemetry.length > 0.3) {
+    return { authentic: false, reason: 'Synthetic 0,0 click coordinates detected (Automated script injection)' };
+  }
+
+  // If someone clicked 20+ times but only at 1 or 2 exact pixel coordinates
+  if (telemetry.length >= 15 && uniquePositions.size <= 2) {
+    return { authentic: false, reason: 'Static unnatural pixel coordinates (Fixed auto-clicker bot)' };
+  }
+
+  return { authentic: true };
+}
 
 export async function startGameSession(req, res) {
   try {
     const studentId = normalizeId(req.body.studentId);
     const deviceId = String(req.body.deviceId || '').trim().toUpperCase();
+    const clientIp = getClientIp(req);
 
     if (!studentId || studentId.length < 2) {
       return res.status(400).json({ error: 'Valid Student ID is required' });
@@ -15,25 +58,29 @@ export async function startGameSession(req, res) {
       return res.status(400).json({ error: 'Valid Device ID is required' });
     }
 
-    const ban = await isDeviceBanned(deviceId);
+    const ban = await isDeviceOrIpBanned(deviceId, clientIp);
     if (ban) {
       return res.status(403).json({
         error: 'DEVICE_BANNED',
         banned: true,
         reason: ban.reason,
         bannedAt: ban.bannedAt,
+        ip: clientIp,
       });
     }
 
-    const sessionId = `SES-${Date.now()}-${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
-    const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const sessionId = `SES-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    const token = crypto.randomBytes(16).toString('hex');
+    const sessionSecret = crypto.randomBytes(24).toString('hex');
     const now = Date.now();
 
     await GameSession.create({
       sessionId,
       studentId,
       deviceId,
+      ip: clientIp,
       token,
+      sessionSecret,
       startedAt: now,
     });
 
@@ -41,6 +88,7 @@ export async function startGameSession(req, res) {
       success: true,
       sessionId,
       token,
+      sessionSecret,
       startedAt: now,
     });
   } catch (error) {
@@ -57,125 +105,200 @@ export async function submitScore(req, res) {
     const deviceId = String(req.body.deviceId || '').trim().toUpperCase();
     const sessionId = req.body.sessionId;
     const token = req.body.token;
+    const telemetry = Array.isArray(req.body.telemetry) ? req.body.telemetry : [];
+    const clientIp = getClientIp(req);
+    const userAgent = req.headers['user-agent'] || '';
 
     if (!studentId || studentId.length < 2) {
       return res.status(400).json({ error: 'Valid Student ID / Roll Number is required' });
     }
 
-    // 1. Device ban check
-    if (deviceId) {
-      const ban = await isDeviceBanned(deviceId);
-      if (ban) {
-        return res.status(403).json({
-          error: 'DEVICE_BANNED',
-          banned: true,
-          reason: ban.reason,
-        });
-      }
+    // 1. IP and Device Ban Check
+    const ban = await isDeviceOrIpBanned(deviceId, clientIp);
+    if (ban) {
+      return res.status(403).json({
+        error: 'DEVICE_BANNED',
+        banned: true,
+        reason: ban.reason,
+        ip: clientIp,
+      });
     }
 
-    // 2. Anti-Cheat Session Check: scores > 3 require an active valid session
+    // 2. Anti-Cheat Verification for scores > 3
     if (score > 3) {
       if (!sessionId || !token) {
-        if (deviceId) {
-          await banDevice(deviceId, 'Direct forged score submission without active game session', studentId, req.ip);
-        }
+        await banClient({
+          deviceId,
+          ip: clientIp,
+          reason: 'Direct score forgery without active game session handshake',
+          studentId,
+          userAgent,
+          violationType: 'SCORE_MANIPULATION',
+        });
         return res.status(403).json({
           error: 'DEVICE_BANNED',
           banned: true,
-          reason: 'Direct forged score submission without active game session',
+          reason: 'Score submission rejected: No active game session.',
         });
       }
 
       const session = await GameSession.findOne({ sessionId });
       if (!session || session.token !== token || session.studentId !== studentId) {
-        if (deviceId) {
-          await banDevice(deviceId, 'Forged or replayed session token detected', studentId, req.ip);
-        }
-        return res.status(403).json({
-          error: 'DEVICE_BANNED',
-          banned: true,
-          reason: 'Forged or replayed session token detected',
-        });
-      }
-
-      // 3. Human limit check (max 500)
-      if (score > 500) {
-        await banDevice(
-          deviceId || session.deviceId,
-          `Score ${score} exceeds human limit of 500 (Cheat / Script injection)`,
+        await banClient({
+          deviceId: deviceId || session?.deviceId,
+          ip: clientIp,
+          reason: 'Invalid or forged game session token',
           studentId,
-          req.ip
-        );
+          userAgent,
+          violationType: 'FORGED_SESSION',
+        });
         return res.status(403).json({
           error: 'DEVICE_BANNED',
           banned: true,
-          reason: `Score of ${score} exceeds maximum human limit of 500. Device permanently banned.`,
+          reason: 'Security verification failed: Forged session.',
         });
       }
 
-      // 4. Timing integrity checks
+      // 3. Human limit check (500 max cap)
+      if (score > 500) {
+        await banClient({
+          deviceId: deviceId || session.deviceId,
+          ip: clientIp,
+          reason: `Score ${score} exceeds physical human limit of 500`,
+          studentId,
+          userAgent,
+          violationType: 'SCORE_MANIPULATION',
+        });
+        return res.status(403).json({
+          error: 'DEVICE_BANNED',
+          banned: true,
+          reason: 'Score exceeds maximum human limit. Device and IP permanently banned.',
+        });
+      }
+
+      // 4. Telemetry Round Count Verification
+      if (score >= 10) {
+        if (telemetry.length < score) {
+          await banClient({
+            deviceId: deviceId || session.deviceId,
+            ip: clientIp,
+            reason: `Telemetry mismatch: claimed score ${score} with only ${telemetry.length} round audit proofs`,
+            studentId,
+            userAgent,
+            violationType: 'SCORE_MANIPULATION',
+          });
+          return res.status(403).json({
+            error: 'DEVICE_BANNED',
+            banned: true,
+            reason: 'Telemetry audit mismatch: Unverified round answers.',
+          });
+        }
+
+        // 5. Superhuman Reaction Speed check (consecutive < 160ms)
+        const sub160Count = telemetry.filter((t) => Number(t.dt) < 160).length;
+        if (sub160Count > 2) {
+          await banClient({
+            deviceId: deviceId || session.deviceId,
+            ip: clientIp,
+            reason: `Superhuman reaction speed: ${sub160Count} answers below 160ms physical cognition threshold`,
+            studentId,
+            userAgent,
+            violationType: 'SPEEDHACK',
+          });
+          return res.status(403).json({
+            error: 'DEVICE_BANNED',
+            banned: true,
+            reason: 'Superhuman bot reaction speed detected. Device and IP permanently banned.',
+          });
+        }
+
+        // 6. Timing Variance Check (detect fixed-interval auto-clickers)
+        const { stdDev } = calculateTimingStats(telemetry);
+        if (telemetry.length >= 15 && stdDev < 15) {
+          await banClient({
+            deviceId: deviceId || session.deviceId,
+            ip: clientIp,
+            reason: `Synthetic bot rhythm detected: click timing standard deviation ${stdDev.toFixed(1)}ms is unnatural (Bot/Auto-Clicker)`,
+            studentId,
+            userAgent,
+            violationType: 'EXTENSION',
+          });
+          return res.status(403).json({
+            error: 'DEVICE_BANNED',
+            banned: true,
+            reason: 'Automated script rhythm detected. Device and IP banned.',
+          });
+        }
+
+        // 7. Coordinate Authenticity
+        const coordCheck = checkCoordinateAuthenticity(telemetry);
+        if (!coordCheck.authentic) {
+          await banClient({
+            deviceId: deviceId || session.deviceId,
+            ip: clientIp,
+            reason: coordCheck.reason,
+            studentId,
+            userAgent,
+            violationType: 'SYNTHETIC_CLICK',
+          });
+          return res.status(403).json({
+            error: 'DEVICE_BANNED',
+            banned: true,
+            reason: coordCheck.reason,
+          });
+        }
+      }
+
+      // 8. Overall Timing integrity check
       const elapsedSeconds = (Date.now() - session.startedAt) / 1000;
 
-      // 4A. Reaching 400-500 in less than 3 minutes (180s)
       if (score >= 400 && elapsedSeconds < 180) {
-        await banDevice(
-          deviceId || session.deviceId,
-          `Superhuman bot speed: scored ${score} in ${elapsedSeconds.toFixed(1)}s (under 3 min for 400+ score is impossible)`,
+        await banClient({
+          deviceId: deviceId || session.deviceId,
+          ip: clientIp,
+          reason: `Impossible speed: score ${score} in ${elapsedSeconds.toFixed(1)}s (min 180s required)`,
           studentId,
-          req.ip
-        );
-        return res.status(403).json({
-          error: 'DEVICE_BANNED',
-          banned: true,
-          reason: `Impossible speed: score ${score} in ${elapsedSeconds.toFixed(1)}s (under 3 minutes is prohibited). Device permanently banned.`,
+          userAgent,
+          violationType: 'SPEEDHACK',
         });
+        return res.status(403).json({ error: 'DEVICE_BANNED', banned: true, reason: 'Speedhack detected.' });
       }
 
-      // 4B. Reaching 250-399 in less than 2 minutes (120s)
       if (score >= 250 && elapsedSeconds < 120) {
-        await banDevice(
-          deviceId || session.deviceId,
-          `Superhuman bot speed: scored ${score} in ${elapsedSeconds.toFixed(1)}s (under 2 min for 250+ score is impossible)`,
+        await banClient({
+          deviceId: deviceId || session.deviceId,
+          ip: clientIp,
+          reason: `Impossible speed: score ${score} in ${elapsedSeconds.toFixed(1)}s (min 120s required)`,
           studentId,
-          req.ip
-        );
-        return res.status(403).json({
-          error: 'DEVICE_BANNED',
-          banned: true,
-          reason: `Impossible speed: score ${score} in ${elapsedSeconds.toFixed(1)}s (under 2 minutes is prohibited). Device permanently banned.`,
+          userAgent,
+          violationType: 'SPEEDHACK',
         });
+        return res.status(403).json({ error: 'DEVICE_BANNED', banned: true, reason: 'Speedhack detected.' });
       }
 
-      // 4C. Reaching 120-249 in less than 1 minute (60s)
       if (score >= 120 && elapsedSeconds < 60) {
-        await banDevice(
-          deviceId || session.deviceId,
-          `Superhuman bot speed: scored ${score} in ${elapsedSeconds.toFixed(1)}s (under 1 min for 120+ score is impossible)`,
+        await banClient({
+          deviceId: deviceId || session.deviceId,
+          ip: clientIp,
+          reason: `Impossible speed: score ${score} in ${elapsedSeconds.toFixed(1)}s (min 60s required)`,
           studentId,
-          req.ip
-        );
-        return res.status(403).json({
-          error: 'DEVICE_BANNED',
-          banned: true,
-          reason: `Impossible speed: score ${score} in ${elapsedSeconds.toFixed(1)}s (under 1 minute is prohibited). Device permanently banned.`,
+          userAgent,
+          violationType: 'SPEEDHACK',
         });
+        return res.status(403).json({ error: 'DEVICE_BANNED', banned: true, reason: 'Speedhack detected.' });
       }
 
-      // 4D. General reaction limit: 350ms per question
       const minimumFeasibleSeconds = score * 0.35;
       if (score >= 5 && elapsedSeconds < minimumFeasibleSeconds) {
-        await banDevice(
-          deviceId || session.deviceId,
-          `Superhuman automated reaction speed: scored ${score} in ${elapsedSeconds.toFixed(1)}s (minimum required ${minimumFeasibleSeconds.toFixed(1)}s)`,
+        await banClient({
+          deviceId: deviceId || session.deviceId,
+          ip: clientIp,
+          reason: `Superhuman reaction rate: scored ${score} in ${elapsedSeconds.toFixed(1)}s (min ${minimumFeasibleSeconds.toFixed(1)}s)`,
           studentId,
-          req.ip
-        );
-        return res.status(403).json({
-          error: 'DEVICE_BANNED',
-          banned: true,
-          reason: 'Superhuman automated reaction speed detected (Bot/Auto-clicker)',
+          userAgent,
+          violationType: 'SPEEDHACK',
         });
+        return res.status(403).json({ error: 'DEVICE_BANNED', banned: true, reason: 'Reaction rate exceeded.' });
       }
 
       // Expire session
@@ -213,7 +336,7 @@ export async function submitScore(req, res) {
       await player.save();
     }
 
-    // Rank in leaderboard
+    // Rank calculation
     const totalHigher = await Player.countDocuments({
       disqualified: false,
       highScore: { $lte: 500 },
@@ -252,8 +375,9 @@ export async function syncPlayers(req, res) {
   try {
     const incomingPlayers = req.body.players;
     const deviceId = req.body.deviceId || req.headers['x-device-id'];
+    const clientIp = getClientIp(req);
 
-    if (deviceId && (await isDeviceBanned(deviceId))) {
+    if (deviceId && (await isDeviceOrIpBanned(deviceId, clientIp))) {
       return res.status(403).json({ error: 'DEVICE_BANNED', banned: true });
     }
 
@@ -266,7 +390,7 @@ export async function syncPlayers(req, res) {
       if (!studentId || studentId.length < 2) continue;
 
       const incHigh = Math.max(0, Math.floor(Number(incoming?.highScore) || 0));
-      // Reject absurd cheated scores in sync
+      // Reject absurd cheated scores in sync (max 300)
       if (incHigh > 300) continue;
 
       const incDate = incoming?.highestScoreDate ? new Date(incoming.highestScoreDate) : new Date();
