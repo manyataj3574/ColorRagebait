@@ -24,6 +24,15 @@
       "totalGames": 1,
       "lastScore": 0,
       "lastPlayedAt": "2026-09-27T08:22:48.451Z"
+    },
+    "DE24343": {
+      "studentId": "DE24343",
+      "highScore": 39,
+      "highestScoreDate": "2026-09-27T19:11:07.040Z",
+      "totalGames": 1,
+      "lastScore": 39,
+      "lastPlayedAt": "2026-09-27T19:11:07.040Z",
+      "level": 3
     }
   }
 }

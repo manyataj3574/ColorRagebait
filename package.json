@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
+    "backend": "npm run dev --prefix backend",
+    "backend:start": "npm run start --prefix backend",
     "build": "vite build",
     "start": "node server.ts",
     "preview": "vite preview",

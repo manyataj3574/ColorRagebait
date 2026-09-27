@@ -239,6 +239,46 @@ function getSortedLeaderboard(players: Record<string, PlayerData>) {
   }));
 }
 
+const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:5000';
+
+// Forward /api requests to MongoDB Backend on port 5000
+app.use('/api', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const targetUrl = `${BACKEND_URL}${req.originalUrl}`;
+    const headers: Record<string, string> = {};
+    for (const [key, value] of Object.entries(req.headers)) {
+      if (typeof value === 'string' && key.toLowerCase() !== 'host') {
+        headers[key] = value;
+      }
+    }
+    const fetchOptions: RequestInit = {
+      method: req.method,
+      headers: {
+        ...headers,
+        'content-type': 'application/json',
+      },
+    };
+    if (['POST', 'PUT', 'PATCH'].includes(req.method) && req.body && Object.keys(req.body).length > 0) {
+      fetchOptions.body = JSON.stringify(req.body);
+    }
+
+    const backendRes = await fetch(targetUrl, fetchOptions);
+    const contentType = backendRes.headers.get('content-type') || '';
+    res.status(backendRes.status);
+
+    if (contentType.includes('application/json')) {
+      const data = await backendRes.json();
+      return res.json(data);
+    } else {
+      const text = await backendRes.text();
+      return res.send(text);
+    }
+  } catch {
+    // If backend is not running on port 5000, fall back to local handlers
+    next();
+  }
+});
+
 // Anti-Cheat Device Ban Interceptor Middleware
 app.use('/api', (req: Request, res: Response, next: NextFunction) => {
   // Allow health check and checking ban status
