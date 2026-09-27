@@ -1,0 +1,18 @@
+{
+  "devices": {
+    "DEV-HACKER99": {
+      "deviceId": "DEV-HACKER99",
+      "studentId": "TESTHACKER",
+      "reason": "Direct forged score submission without active game session",
+      "bannedAt": "2026-09-27T10:18:58.073Z",
+      "ip": "127.0.0.1"
+    },
+    "DEV-SPEEDHACK": {
+      "deviceId": "DEV-SPEEDHACK",
+      "studentId": "TESTHACKER2",
+      "reason": "Superhuman bot speed: scored 500 in 1.7s (under 3 min for 400+ score is impossible)",
+      "bannedAt": "2026-09-27T10:19:01.908Z",
+      "ip": "127.0.0.1"
+    }
+  }
+}

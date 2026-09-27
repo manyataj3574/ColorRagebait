@@ -1,0 +1,6 @@
+{
+  "name": "COCO – Colour Confusion",
+  "description": "A simple, fast-paced colour confusion game where students test their reflexes, avoid the word trap, and compete on the campus leaderboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

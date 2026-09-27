@@ -1,0 +1,29 @@
+{
+  "players": {
+    "23CSE041": {
+      "studentId": "23CSE041",
+      "highScore": 120,
+      "highestScoreDate": "2026-09-27T09:32:04.233Z",
+      "totalGames": 3,
+      "lastScore": 120,
+      "lastPlayedAt": "2026-09-27T09:32:04.233Z",
+      "level": 9
+    },
+    "23CSE017": {
+      "studentId": "23CSE017",
+      "highScore": 30,
+      "highestScoreDate": "2026-09-27T08:00:00Z",
+      "totalGames": 2,
+      "lastScore": 30,
+      "lastPlayedAt": "2026-09-27T08:00:00Z"
+    },
+    "26I1039": {
+      "studentId": "26I1039",
+      "highScore": 0,
+      "highestScoreDate": "2026-09-27T08:22:48.451Z",
+      "totalGames": 1,
+      "lastScore": 0,
+      "lastPlayedAt": "2026-09-27T08:22:48.451Z"
+    }
+  }
+}
