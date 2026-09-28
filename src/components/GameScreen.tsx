@@ -3,7 +3,7 @@ import { ColorItem, GameOverData, GameQuestion, BanInfo, RoundTelemetry } from '
 import { generateQuestion } from '../utils/colors';
 import { getLevelForScore, getTimeLimitForScore } from '../utils/levels';
 import { soundManager } from '../utils/audio';
-import { reportAndBanDevice, getDeviceId, startAntiCheatWatchdog } from '../utils/anticheat';
+import { getDeviceId, startAntiCheatWatchdog } from '../utils/anticheat';
 import { Zap, Sparkles, ShieldCheck } from 'lucide-react';
 
 interface GameScreenProps {
@@ -31,12 +31,10 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   const [showScorePopup, setShowScorePopup] = useState<boolean>(false);
   const [levelUpMessage, setLevelUpMessage] = useState<string | null>(null);
 
-  // Anti-Cheat: 300ms button enable delay ("button ka click 300ms ke bad enable karo")
+  // Debounce buffer: brief 120ms delay on question switch to prevent accidental double-tap bounce
   const [isClickLocked, setIsClickLocked] = useState<boolean>(true);
   const questionRenderTimeRef = useRef<number>(Date.now());
   const lockTimeoutRef = useRef<number | null>(null);
-  const rapidLockedClicksRef = useRef<number>(0);
-  const sub170StrikesRef = useRef<number>(0);
 
   // References for timing
   const timerRef = useRef<number | null>(null);
@@ -62,11 +60,10 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
   const currentLevel = getLevelForScore(score);
 
-  // Trigger 300ms button lock on every question change
+  // Trigger brief debounce lock on question change to prevent accidental touch bounce
   useEffect(() => {
     setIsClickLocked(true);
     questionRenderTimeRef.current = Date.now();
-    rapidLockedClicksRef.current = 0;
 
     if (lockTimeoutRef.current) {
       clearTimeout(lockTimeoutRef.current);
@@ -74,7 +71,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
     lockTimeoutRef.current = window.setTimeout(() => {
       setIsClickLocked(false);
-    }, 300); // 300ms human cognitive reaction buffer
+    }, 120); // 120ms smooth anti-bounce window
 
     return () => {
       if (lockTimeoutRef.current) {
@@ -164,46 +161,16 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   // Handle player choice with Anti-Cheat checks
   const handleSelectColor = useCallback(
     async (chosenColor: ColorItem, event?: React.MouseEvent | KeyboardEvent) => {
-      // 1. Anti-Cheat Check: Synthetic event (auto-clicker or script using element.click())
-      if (event) {
-        if (event.isTrusted === false) {
-          const reason = 'Synthetic automated click event detected (Bot Script / Auto-clicker)';
-          await reportAndBanDevice(studentId, reason, 'SYNTHETIC_CLICK');
-          onDeviceBanned({ isBanned: true, reason, deviceId: getDeviceId() });
-          return;
-        }
-
-        // Real human mouse clicks in browsers have detail >= 1. Synthetic .click() sets detail: 0
-        if ('detail' in event && event.detail === 0 && !('key' in event)) {
-          const reason = 'Synthetic click dispatch detected (element.click() without human cursor)';
-          await reportAndBanDevice(studentId, reason, 'SYNTHETIC_CLICK');
-          onDeviceBanned({ isBanned: true, reason, deviceId: getDeviceId() });
-          return;
-        }
+      // 1. Block untrusted synthetic scripts (auto-clickers dispatching fake events)
+      if (event && event.isTrusted === false) {
+        return;
       }
 
-      // 2. Anti-Cheat Check: 300ms Click Lock Buffer ("button ka click 300ms ke bad enable karo")
+      // 2. Debounce buffer: Silently ignore click if tapped within first 100ms
+      // (prevents double-tap bounce; NEVER bans for fast guesswork or rapid tapping)
       const elapsedMs = Date.now() - questionRenderTimeRef.current;
-      if (isClickLocked || elapsedMs < 300) {
-        rapidLockedClicksRef.current++;
-        // If an automated script violently spams clicks in the locked buffer:
-        if (rapidLockedClicksRef.current > 4) {
-          const reason = 'Rapid click spam during locked buffer (Auto-clicker Bot Script)';
-          await reportAndBanDevice(studentId, reason, 'SYNTHETIC_CLICK');
-          onDeviceBanned({ isBanned: true, reason, deviceId: getDeviceId() });
-        }
-        return; // Ignore and block any click before 300ms!
-      }
-
-      // 3. Anti-Cheat Check: Reaction speed (<170ms cognitive limit)
-      if (elapsedMs < 170) {
-        sub170StrikesRef.current++;
-        if (sub170StrikesRef.current >= 3) {
-          const reason = `Superhuman reaction speed (${elapsedMs}ms consecutive answers below human physiological threshold)`;
-          await reportAndBanDevice(studentId, reason, 'SPEEDHACK');
-          onDeviceBanned({ isBanned: true, reason, deviceId: getDeviceId() });
-          return;
-        }
+      if (isClickLocked || elapsedMs < 100) {
+        return;
       }
 
       if (isProcessing || isGameOverRef.current) return;

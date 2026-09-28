@@ -38,6 +38,16 @@ export async function reportAndBanDevice(req, res) {
       return res.status(400).json({ error: 'Device ID or IP required' });
     }
 
+    // Ignore client-side timing/speedhack reports (prevents false positive audio skew bans from older client caches)
+    if (violationType === 'SPEEDHACK' || reason.toLowerCase().includes('speedhack') || reason.toLowerCase().includes('clock')) {
+      console.warn(`[Anti-Cheat] Ignored legacy client timing report for ${studentId || deviceId}: ${reason}`);
+      return res.json({
+        success: true,
+        banned: false,
+        message: 'Clock/timing self-reports are deprecated to avoid false positives.',
+      });
+    }
+
     const ban = await banClient({
       deviceId,
       ip: clientIp,

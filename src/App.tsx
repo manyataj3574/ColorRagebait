@@ -42,10 +42,14 @@ export default function App() {
     }
 
     initializeSync();
+    // Pre-warm Render backend on free tier so cold starts don't affect initial games
+    fetch(`${(import.meta.env.VITE_API_URL || '').replace(/\/$/, '')}/api/health`).catch(() => {});
     checkDeviceBanStatus().then((info) => {
       if (info.isBanned) {
         setBanInfo(info);
         setScreenState('BANNED');
+      } else {
+        setBanInfo(null);
       }
     });
   }, []);

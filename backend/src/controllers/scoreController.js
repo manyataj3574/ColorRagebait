@@ -127,35 +127,17 @@ export async function submitScore(req, res) {
     // 2. Anti-Cheat Verification for scores > 3
     if (score > 3) {
       if (!sessionId || !token) {
-        await banClient({
-          deviceId,
-          ip: clientIp,
-          reason: 'Direct score forgery without active game session handshake',
-          studentId,
-          userAgent,
-          violationType: 'SCORE_MANIPULATION',
-        });
-        return res.status(403).json({
-          error: 'DEVICE_BANNED',
-          banned: true,
-          reason: 'Score submission rejected: No active game session.',
+        return res.status(400).json({
+          error: 'SESSION_REQUIRED',
+          message: 'Active game session required to record verified scores. Please start a new game.',
         });
       }
 
       const session = await GameSession.findOne({ sessionId });
       if (!session || session.token !== token || session.studentId !== studentId) {
-        await banClient({
-          deviceId: deviceId || session?.deviceId,
-          ip: clientIp,
-          reason: 'Invalid or forged game session token',
-          studentId,
-          userAgent,
-          violationType: 'FORGED_SESSION',
-        });
-        return res.status(403).json({
-          error: 'DEVICE_BANNED',
-          banned: true,
-          reason: 'Security verification failed: Forged session.',
+        return res.status(400).json({
+          error: 'SESSION_EXPIRED',
+          message: 'Game session expired or connection was interrupted. Please play a new round.',
         });
       }
 
@@ -172,7 +154,7 @@ export async function submitScore(req, res) {
         return res.status(403).json({
           error: 'DEVICE_BANNED',
           banned: true,
-          reason: 'Score exceeds maximum human limit. Device and IP permanently banned.',
+          reason: 'Score exceeds maximum human limit.',
         });
       }
 
@@ -186,129 +168,56 @@ export async function submitScore(req, res) {
       }
 
       if (score >= 10 && telemetry.length > 0) {
-        // Allow a small tolerance of 3 rounds for timeout/wrong-choice drops or network jitter
-        const minExpected = Math.max(1, score - 3);
+        // Allow generous tolerance for rapid guesses, drops or network lag
+        const minExpected = Math.max(1, Math.floor(score * 0.5));
         if (telemetry.length < minExpected) {
-          await banClient({
-            deviceId: deviceId || session.deviceId,
-            ip: clientIp,
-            reason: `Telemetry mismatch: claimed score ${score} with only ${telemetry.length} round audit proofs (minimum required: ${minExpected})`,
-            studentId,
-            userAgent,
-            violationType: 'SCORE_MANIPULATION',
-          });
-          return res.status(403).json({
-            error: 'DEVICE_BANNED',
-            banned: true,
-            reason: 'Telemetry audit mismatch: Unverified round answers.',
+          return res.status(400).json({
+            error: 'AUDIT_FAILED',
+            message: 'Telemetry audit mismatch: Unverified round answers.',
           });
         }
 
-        // 5. Superhuman Reaction Speed check (consecutive < 160ms)
-        const sub160Count = telemetry.filter((t) => Number(t.dt) < 160).length;
-        if (sub160Count > 3) {
-          await banClient({
-            deviceId: deviceId || session.deviceId,
-            ip: clientIp,
-            reason: `Superhuman reaction speed: ${sub160Count} answers below 160ms physical cognition threshold`,
-            studentId,
-            userAgent,
-            violationType: 'SPEEDHACK',
-          });
-          return res.status(403).json({
-            error: 'DEVICE_BANNED',
-            banned: true,
-            reason: 'Superhuman bot reaction speed detected. Device permanently banned.',
-          });
-        }
+        // Note: Reaction speed (sub-160ms) check is intentionally removed
+        // to fully support human fast guesswork without false positive bans!
 
-        // 6. Timing Variance Check (detect fixed-interval auto-clickers)
+        // 5. Timing Variance Check (detect automated fixed-frequency bots)
         const { stdDev } = calculateTimingStats(telemetry);
-        if (telemetry.length >= 20 && stdDev < 12) {
-          await banClient({
-            deviceId: deviceId || session.deviceId,
-            ip: clientIp,
-            reason: `Synthetic bot rhythm detected: click timing standard deviation ${stdDev.toFixed(1)}ms is unnatural (Bot/Auto-Clicker)`,
-            studentId,
-            userAgent,
-            violationType: 'EXTENSION',
-          });
-          return res.status(403).json({
-            error: 'DEVICE_BANNED',
-            banned: true,
-            reason: 'Automated script rhythm detected. Device banned.',
+        if (telemetry.length >= 35 && stdDev < 4) {
+          return res.status(400).json({
+            error: 'BOT_RHYTHM_SUSPECTED',
+            message: 'Unnatural robotic click cadence detected.',
           });
         }
 
-        // 7. Coordinate Authenticity
+        // 6. Coordinate Authenticity
         const coordCheck = checkCoordinateAuthenticity(telemetry);
         if (!coordCheck.authentic) {
-          await banClient({
-            deviceId: deviceId || session.deviceId,
-            ip: clientIp,
-            reason: coordCheck.reason,
-            studentId,
-            userAgent,
-            violationType: 'SYNTHETIC_CLICK',
-          });
-          return res.status(403).json({
-            error: 'DEVICE_BANNED',
-            banned: true,
-            reason: coordCheck.reason,
+          return res.status(400).json({
+            error: 'INPUT_INVALID',
+            message: coordCheck.reason || 'Input coordinate verification failed.',
           });
         }
       }
 
-      // 8. Overall Timing integrity check
+      // 7. Overall Timing integrity check (generous limits to tolerate free-tier delays and fast guesswork)
       const elapsedSeconds = (Date.now() - session.startedAt) / 1000;
 
-      if (score >= 400 && elapsedSeconds < 180) {
-        await banClient({
-          deviceId: deviceId || session.deviceId,
-          ip: clientIp,
-          reason: `Impossible speed: score ${score} in ${elapsedSeconds.toFixed(1)}s (min 180s required)`,
-          studentId,
-          userAgent,
-          violationType: 'SPEEDHACK',
-        });
-        return res.status(403).json({ error: 'DEVICE_BANNED', banned: true, reason: 'Speedhack detected.' });
+      if (score >= 400 && elapsedSeconds < 60) {
+        return res.status(400).json({ error: 'TIMING_INVALID', message: 'Score timing verification failed.' });
       }
 
-      if (score >= 250 && elapsedSeconds < 120) {
-        await banClient({
-          deviceId: deviceId || session.deviceId,
-          ip: clientIp,
-          reason: `Impossible speed: score ${score} in ${elapsedSeconds.toFixed(1)}s (min 120s required)`,
-          studentId,
-          userAgent,
-          violationType: 'SPEEDHACK',
-        });
-        return res.status(403).json({ error: 'DEVICE_BANNED', banned: true, reason: 'Speedhack detected.' });
+      if (score >= 250 && elapsedSeconds < 35) {
+        return res.status(400).json({ error: 'TIMING_INVALID', message: 'Score timing verification failed.' });
       }
 
-      if (score >= 120 && elapsedSeconds < 60) {
-        await banClient({
-          deviceId: deviceId || session.deviceId,
-          ip: clientIp,
-          reason: `Impossible speed: score ${score} in ${elapsedSeconds.toFixed(1)}s (min 60s required)`,
-          studentId,
-          userAgent,
-          violationType: 'SPEEDHACK',
-        });
-        return res.status(403).json({ error: 'DEVICE_BANNED', banned: true, reason: 'Speedhack detected.' });
+      if (score >= 120 && elapsedSeconds < 15) {
+        return res.status(400).json({ error: 'TIMING_INVALID', message: 'Score timing verification failed.' });
       }
 
-      const minimumFeasibleSeconds = score * 0.35;
-      if (score >= 5 && elapsedSeconds < minimumFeasibleSeconds) {
-        await banClient({
-          deviceId: deviceId || session.deviceId,
-          ip: clientIp,
-          reason: `Superhuman reaction rate: scored ${score} in ${elapsedSeconds.toFixed(1)}s (min ${minimumFeasibleSeconds.toFixed(1)}s)`,
-          studentId,
-          userAgent,
-          violationType: 'SPEEDHACK',
-        });
-        return res.status(403).json({ error: 'DEVICE_BANNED', banned: true, reason: 'Reaction rate exceeded.' });
+      // Generous physical floor allowing rapid human guesswork (~120ms per answer)
+      const minimumFeasibleSeconds = score * 0.12;
+      if (score >= 15 && elapsedSeconds < minimumFeasibleSeconds) {
+        return res.status(400).json({ error: 'TIMING_TOO_FAST', message: 'Score timing was faster than feasible.' });
       }
 
       // Expire session

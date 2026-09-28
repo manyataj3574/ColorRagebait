@@ -63,6 +63,15 @@ export function markDeviceBannedLocally(reason: string) {
   }
 }
 
+// Clear local ban
+export function clearLocalBan() {
+  try {
+    localStorage.removeItem(STORAGE_KEY_BAN);
+  } catch {
+    // Ignore
+  }
+}
+
 // Report and execute server device + IP ban
 export async function reportAndBanDevice(
   studentId: string,
@@ -93,152 +102,27 @@ export async function reportAndBanDevice(
   }
 }
 
-// Check if a native browser function has been modified or hooked
-function isNativeFunctionHooked(fn: any): boolean {
-  try {
-    if (!fn) return false;
-    const str = Function.prototype.toString.call(fn);
-    return !str.includes('[native code]');
-  } catch {
-    return true;
-  }
-}
-
-// Hardware Audio Clock for Speedhack Detection
-let audioCtx: AudioContext | null = null;
-let lastAudioCheckTime = 0;
-let lastPerfCheckTime = 0;
-
-export function checkSpeedhackClockSkew(): { detected: boolean; reason?: string } {
-  try {
-    if (typeof window.AudioContext === 'undefined' && typeof (window as any).webkitAudioContext === 'undefined') {
-      return { detected: false };
-    }
-
-    if (!audioCtx) {
-      const AudioConstructor = window.AudioContext || (window as any).webkitAudioContext;
-      audioCtx = new AudioConstructor();
-      lastAudioCheckTime = audioCtx.currentTime;
-      lastPerfCheckTime = performance.now();
-      return { detected: false };
-    }
-
-    if (audioCtx.state === 'suspended') {
-      audioCtx.resume().catch(() => {});
-    }
-
-    const currentAudioTime = audioCtx.currentTime;
-    const currentPerfTime = performance.now();
-
-    const audioElapsedSec = currentAudioTime - lastAudioCheckTime;
-    const perfElapsedSec = (currentPerfTime - lastPerfCheckTime) / 1000;
-
-    // Only test if at least 1.5 seconds has elapsed
-    if (audioElapsedSec >= 1.5 && perfElapsedSec >= 1.5) {
-      const ratio = perfElapsedSec / audioElapsedSec;
-      lastAudioCheckTime = currentAudioTime;
-      lastPerfCheckTime = currentPerfTime;
-
-      // If wall/perf clock runs 1.4x faster or slower than hardware audio clock -> Speedhack active!
-      if (ratio > 1.45 || ratio < 0.65) {
-        return {
-          detected: true,
-          reason: `Speedhack clock manipulation detected: Time dilation ratio ${ratio.toFixed(2)}x deviates from hardware clock.`,
-        };
-      }
-    }
-  } catch {
-    // Ignore audio clock errors
-  }
-
-  return { detected: false };
-}
-
-// Detect browser extensions, userscripts, auto-clickers, and DOM injectors
+// Detect active userscript injection or automated browser drivers
+// (Intentionally excludes regular extensions like AdBlock, translators, dark mode, or mobile WebViews)
 export function scanForExtensionsAndCheats(): { detected: boolean; reason?: string; violationType?: string } {
   const win = window as any;
 
-  // 1. Detect Tampermonkey / Greasemonkey / Violentmonkey global objects
+  // 1. Detect explicit script engine objects (Tampermonkey/Violentmonkey userscript execution)
   if (
-    typeof win.GM !== 'undefined' ||
-    typeof win.GM_info !== 'undefined' ||
     typeof win.GM_setValue !== 'undefined' ||
     typeof win.GM_getValue !== 'undefined' ||
-    typeof win.GM_xmlhttpRequest !== 'undefined' ||
     typeof win.__tampermonkey !== 'undefined' ||
     typeof win.tampermonkey !== 'undefined' ||
-    typeof win.violentmonkey !== 'undefined' ||
-    typeof win.unsafeWindow !== 'undefined'
+    typeof win.violentmonkey !== 'undefined'
   ) {
     return {
       detected: true,
-      reason: 'Browser Extension Detected: Tampermonkey / Greasemonkey Userscript Injector found in runtime window.',
+      reason: 'Browser Userscript Injector detected running in window.',
       violationType: 'EXTENSION',
     };
   }
 
-  // 2. Check for extension scripts or content scripts in DOM
-  try {
-    const scripts = document.querySelectorAll('script');
-    for (let i = 0; i < scripts.length; i++) {
-      const src = scripts[i].src || '';
-      if (
-        src.startsWith('chrome-extension://') ||
-        src.startsWith('moz-extension://') ||
-        src.startsWith('safari-extension://')
-      ) {
-        return {
-          detected: true,
-          reason: `Browser Extension Script Injected: ${src.substring(0, 45)}...`,
-          violationType: 'EXTENSION',
-        };
-      }
-    }
-
-    // Check for extension injected elements
-    if (
-      document.querySelector('[id*="tampermonkey"]') ||
-      document.querySelector('[class*="violentmonkey"]') ||
-      document.querySelector('[data-extension-id]') ||
-      document.querySelector('[id*="autoclick"]') ||
-      document.querySelector('[class*="autoclick"]')
-    ) {
-      return {
-        detected: true,
-        reason: 'Automated Browser Extension / Auto-Clicker DOM element detected.',
-        violationType: 'EXTENSION',
-      };
-    }
-  } catch {
-    // Ignore DOM issues
-  }
-
-  // 3. Check for hooked native APIs
-  if (isNativeFunctionHooked(window.fetch)) {
-    return {
-      detected: true,
-      reason: 'Browser Extension Detected: window.fetch has been modified/hooked.',
-      violationType: 'EXTENSION',
-    };
-  }
-
-  if (isNativeFunctionHooked(EventTarget.prototype.addEventListener)) {
-    return {
-      detected: true,
-      reason: 'Browser Extension Detected: addEventListener prototype has been altered.',
-      violationType: 'EXTENSION',
-    };
-  }
-
-  if (isNativeFunctionHooked(HTMLButtonElement.prototype.click)) {
-    return {
-      detected: true,
-      reason: 'Browser Extension Detected: button.click prototype has been modified.',
-      violationType: 'EXTENSION',
-    };
-  }
-
-  // 4. Check for automated window bot flags (like Puppeteer/Selenium/Playwright)
+  // 2. Check for automated window bot flags (like Puppeteer/Selenium/Playwright)
   if (
     navigator.webdriver ||
     win.__webdriver_script_fn ||
@@ -254,20 +138,10 @@ export function scanForExtensionsAndCheats(): { detected: boolean; reason?: stri
     };
   }
 
-  // 5. Check hardware audio clock skew for speedhacks
-  const speedCheck = checkSpeedhackClockSkew();
-  if (speedCheck.detected) {
-    return {
-      detected: true,
-      reason: speedCheck.reason,
-      violationType: 'SPEEDHACK',
-    };
-  }
-
   return { detected: false };
 }
 
-// Continuous anti-cheat watchdog during gameplay
+// Anti-cheat watchdog during gameplay
 export function startAntiCheatWatchdog(
   studentId: string,
   onBanned: (reason: string) => void
@@ -279,7 +153,7 @@ export function startAntiCheatWatchdog(
       reportAndBanDevice(studentId, scan.reason, scan.violationType || 'EXTENSION');
       onBanned(scan.reason);
     }
-  }, 1200);
+  }, 3000);
 
   return () => {
     clearInterval(intervalId);

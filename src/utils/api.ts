@@ -1,6 +1,6 @@
 import { LeaderboardEntry, PlayerProfile, SubmitScoreResponse, BanInfo, RoundTelemetry } from '../types';
 import { getLevelForScore } from './levels';
-import { getDeviceId, isDeviceBannedLocally, markDeviceBannedLocally } from './anticheat';
+import { getDeviceId, isDeviceBannedLocally, markDeviceBannedLocally, clearLocalBan } from './anticheat';
 
 const STORAGE_KEY_STUDENT_ID = 'coco_student_id';
 const STORAGE_KEY_PLAYERS = 'coco_permanent_scores_v3';
@@ -75,19 +75,9 @@ export async function startVerifiedGameSession(studentId: string): Promise<boole
   return true;
 }
 
-// Check if device is banned (both locally & on server)
+// Check if device is banned (queries server first to clear false bans, falls back to local cache if offline)
 export async function checkDeviceBanStatus(): Promise<BanInfo> {
-  const local = isDeviceBannedLocally();
   const deviceId = getDeviceId();
-
-  if (local.banned) {
-    return {
-      isBanned: true,
-      reason: local.reason,
-      bannedAt: local.bannedAt,
-      deviceId,
-    };
-  }
 
   try {
     const res = await fetch(`${API_BASE}/api/anticheat/check?deviceId=${encodeURIComponent(deviceId)}`, {
@@ -103,10 +93,25 @@ export async function checkDeviceBanStatus(): Promise<BanInfo> {
           bannedAt: data.bannedAt,
           deviceId,
         };
+      } else {
+        // Confirmed unbanned / not banned on server -> clear any local ban flag!
+        clearLocalBan();
+        return { isBanned: false, deviceId };
       }
     }
   } catch {
-    // Ignore network error
+    // Ignore network error (e.g. offline play)
+  }
+
+  // Fallback to local ban flag only if server was unreachable
+  const local = isDeviceBannedLocally();
+  if (local.banned) {
+    return {
+      isBanned: true,
+      reason: local.reason,
+      bannedAt: local.bannedAt,
+      deviceId,
+    };
   }
 
   return { isBanned: false, deviceId };
